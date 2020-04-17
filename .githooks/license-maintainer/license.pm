@@ -135,17 +135,16 @@ sub _execute($$$$$$$) {
     my ($license_text_file, $source_file, $contents, $author, $add_author_only_if_no_authors_listed, $author_years, $dry_run) = @_;
 
     my $license = _getLicenseText($license_text_file);
+    
+	# replace line endings
 
-    # check for possible hashbang line and temporarily detach it
+	$contents =~ s/\r?\n/\r\n/g;
 
-    my $text_before_license = '';
-    if ($contents =~ s{^(#!\V+\v)(?:\h*\v)*}{}s) {
-	$text_before_license = $1;
-	if ($EMPTY_LINE_AFTER_HASHBANG) {
-	    $text_before_license .= "\n";
-	}
-    } elsif ($contents =~ s{^(<\?xml\V*\?>\s*\v)(?:\h*\v)*}{}s) {
-	$text_before_license = $1;
+	# check if file contains BOM and temporarily detach it
+
+	my $bom = '';
+	if ($contents =~ s/^\xEF\xBB\xBF//) {
+		$bom = $1;
     }
 
     # create regexp version of license for relaxed detection of existing license
@@ -181,7 +180,7 @@ sub _execute($$$$$$$) {
     } else {
 	# full license not present - see if any single line of license is
 	# present, in which case someone broke the header accidentally
-	my @license_line_regexps = map { regexpify_license($_) } grep { m![a-zA-Z]! } split("\n", $license);
+	my @license_line_regexps = map { regexpify_license($_) } grep { m![a-zA-Z]! } split("\r\n", $license);
 	foreach my $license_line_regexp (@license_line_regexps) {
 	    if ($contents =~ m!^$license_line_regexp$!m) {
 		print STDERR "ERROR: License header broken in ",$source_file," - please fix manually\n";
@@ -203,7 +202,7 @@ sub _execute($$$$$$$) {
 
     # output
 
-    return 0, $text_before_license, $newlicense, $contents;
+    return 0, $bom, $newlicense, $contents;
 }
 
 sub isLackingProperLicense($$$) {

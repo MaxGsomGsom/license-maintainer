@@ -14,16 +14,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-BEGIN {
-    push @INC, '.';
-}
-
 use strict;
 use warnings;
 use IPC::Open2;
 use File::Temp qw(mktemp);
+use File::Basename;
 
-require '.githooks/license-maintainer/license.pm';
+BEGIN {
+    push @INC, dirname(__FILE__);
+}
+
+require 'license.pm';
 
 sub extract_timestamp($) {
     my $gitdate = $_[0];
@@ -51,8 +52,6 @@ if ($INJECT_LICENSES) {
 
 my $repoRootDir = `pwd`;
 chomp $repoRootDir;
-
-my $scriptDir = $repoRootDir.'/.githooks/license-maintainer';
 
 my $origLineSeparator = $/;
 $/="\0";
@@ -120,107 +119,91 @@ foreach my $staged (@filesInStage) {
     # transform file and store transformed in git
     # transformedsha=`git cat-file blob <origsha> | perl license.pl LICENSE-<format> <file> | git hash-object -w --path <filepath> --stdin`
 
-    # Run "git cat-file blob <origsha>" to get the staged files' contents on stdout e.g. readable through *origFileContentFh
-    local *origFileContentFh;
-    open(\*origFileContentFh, '-|', 'git', 'cat-file', 'blob', $staged->{sha}) or die 'git cat-file '.$staged->{sha};
-
-    undef $/;
-    my $origFileContent = <origFileContentFh>;
-    $/ = $origLineSeparator;
-    close origFileContentFh;
-
-    my $license_text_file = $repoRootDir.'/'.$licenseFile;
-    if (!$isFileChangedByCommit && !$INJECT_LICENSES) {
-	# file not changed, just check license
-
-	my $ret = My::License::isLackingProperLicense($license_text_file, $staged->{name}, $origFileContent);
-	if ($ret == 0) {
-	    # license ok
-	} elsif ($ret == 1) {
-	    # license malformed, error already reported by script
-	    ++$numFilesWithLicenseBrokenOrMissing;
-	} elsif ($ret == 2) {
-	    # license missing
-	    print STDERR "WARNING: License missing in ",$staged->{name},"\n";
-	    ++$numFilesWithLicenseBrokenOrMissing;
-	} else {
-	    die "Unhandled isLackingProperLicense() return code $ret";
-	}
-    } else {
 	# file changed, add license or update license to contain current year
+    if ($isFileChangedByCommit || $INJECT_LICENSES) {
+		# Run "git cat-file blob <origsha>" to get the staged files' contents on stdout e.g. readable through *origFileContentFh
+		local *origFileContentFh;
+		open(\*origFileContentFh, '-|', 'git', 'cat-file', 'blob', $staged->{sha}) or die 'git cat-file '.$staged->{sha};
 
-	my %author_years;
-	if ($isFileChangedByCommit) {
-	    # use author timestamp of current commit author
-	    my $author_date = extract_timestamp($ENV{'GIT_AUTHOR_DATE'}) || time();
-	    my @author_date_fields = localtime($author_date);
-	    my $author_year = $author_date_fields[5] + 1900;
-	    $author_years{$author_year} = 1;
-	} else {
-	    # use author timestamp of commit when file was last changed
-	    open TSTAMPS, '-|', 'git', 'log', '--format=format:%ai', $staged->{name} or die "Internal error: Unable to find any commits for $staged->{name}";
-	    while (<TSTAMPS>) {
-		my $author_year = substr($_,0,4);
-		$author_years{$author_year} = 1;
-	    }
-	    close TSTAMPS;
-	    scalar(keys %author_years) >= 0 or die "Internal error: Unable to find any commits for $staged->{name}";
-	}
-	my ($ret, @transformedContent) = My::License::maintainLicense($license_text_file, $staged->{name}, $origFileContent, $author, !$isFileChangedByCommit, \%author_years);
-	if ($ret == 1) {
-	    print STDERR "Please correct the problems before re-attempting commit\n";
-	    exit(1);
-	} elsif ($ret != 0) {
-	    die "Unhandled maintainLicense() return code $ret";
-	}
+		undef $/;
+		my $origFileContent = <origFileContentFh>;
+		$/ = $origLineSeparator;
+		close origFileContentFh;
 
-	# Run "git hash-object -w --path <file> --stdin". stdin: transformed contents from *transformedFileContentFh, stdout: sha of contents through *transformedShaFh
-	local *transformedShaFh;
-	local *transformedFileContentFh;
-	my $gitHashObjectPid = open2(\*transformedShaFh, \*transformedFileContentFh, 'git', 'hash-object', '-w', '--path', $staged->{name}, '--stdin') or die 'git hash-object';
+		my $license_text_file = $licenseFile;
 
-	print transformedFileContentFh @transformedContent;
-	close transformedFileContentFh;
+		my %author_years;
+		if ($isFileChangedByCommit) {
+			# use author timestamp of current commit author
+			my $author_date = extract_timestamp($ENV{'GIT_AUTHOR_DATE'}) || time();
+			my @author_date_fields = localtime($author_date);
+			my $author_year = $author_date_fields[5] + 1900;
+			$author_years{$author_year} = 1;
+		} else {
+			# use author timestamp of commit when file was last changed
+			open TSTAMPS, '-|', 'git', 'log', '--format=format:%ai', $staged->{name} or die "Internal error: Unable to find any commits for $staged->{name}";
+			while (<TSTAMPS>) {
+			my $author_year = substr($_,0,4);
+			$author_years{$author_year} = 1;
+			}
+			close TSTAMPS;
+			scalar(keys %author_years) >= 0 or die "Internal error: Unable to find any commits for $staged->{name}";
+		}
+		my ($ret, @transformedContent) = My::License::maintainLicense($license_text_file, $staged->{name}, $origFileContent, $author, !$isFileChangedByCommit, \%author_years);
+		if ($ret == 1) {
+			print STDERR "Please correct the problems before re-attempting commit\n";
+			exit(1);
+		} elsif ($ret != 0) {
+			die "Unhandled maintainLicense() return code $ret";
+		}
 
-	# read sha of transformed file
-	my $transformedSha = <transformedShaFh>;
-	die 'read git hash-object sha' unless(defined($transformedSha));
-	close transformedShaFh;
-	chomp $transformedSha;
+		# Run "git hash-object -w --path <file> --stdin". stdin: transformed contents from *transformedFileContentFh, stdout: sha of contents through *transformedShaFh
+		local *transformedShaFh;
+		local *transformedFileContentFh;
+		my $gitHashObjectPid = open2(\*transformedShaFh, \*transformedFileContentFh, 'git', 'hash-object', '-w', '--path', $staged->{name}, '--stdin') or die 'git hash-object';
 
-	# check exit codes of commands run
-	waitpid $gitHashObjectPid, 0;
-	die "git hash-object failed ".($? >> 8) if ($? >> 8);
+		print transformedFileContentFh @transformedContent;
+		close transformedFileContentFh;
 
-	# sanity check
-	die "Refusing to result in empty file" if($transformedSha eq $EMPTY_SHA);
+		# read sha of transformed file
+		my $transformedSha = <transformedShaFh>;
+		die 'read git hash-object sha' unless(defined($transformedSha));
+		close transformedShaFh;
+		chomp $transformedSha;
 
-	# if transformed version is different from original, update stage and checkout with transformed version
-	unless ($staged->{sha} eq $transformedSha) {
-	    # Update stage by using the sha of the transformed contents for the filename in question
+		# check exit codes of commands run
+		waitpid $gitHashObjectPid, 0;
+		die "git hash-object failed ".($? >> 8) if ($? >> 8);
 
-	    # Run "git update-index --cacheinfo <mode> <sha> <file>" to update stage with transformed version
-	    system('git', 'update-index', '--cacheinfo', $staged->{mode}, $transformedSha, $staged->{name}) and die 'git update-index '.$transformedSha.' '.$staged->{name}.' returned '.($? >> 8);
+		# sanity check
+		die "Refusing to result in empty file" if($transformedSha eq $EMPTY_SHA);
 
-	    # The file in the checkout may be different than the file
-	    # in the index, so we cannot overwrite it directly.
-	    # Instead we try to apply the differencies applied by the
-	    # license transformer, and in case that fails, let user
-	    # resolve it.
+		# if transformed version is different from original, update stage and checkout with transformed version
+		unless ($staged->{sha} eq $transformedSha) {
+			# Update stage by using the sha of the transformed contents for the filename in question
 
-	    # Run "git diff <origsha> <transformedsha>". stdin: none, stdout: effective diff of license transformer operation
-	    local *licenseDiffFh;
-	    open(\*licenseDiffFh, '-|', 'git', 'diff', $staged->{sha}, $transformedSha) or die 'git diff';
+			# Run "git update-index --cacheinfo <mode> <sha> <file>" to update stage with transformed version
+			system('git', 'update-index', '--cacheinfo', $staged->{mode}, $transformedSha, $staged->{name}) and die 'git update-index '.$transformedSha.' '.$staged->{name}.' returned '.($? >> 8);
 
-	    # Run "patch --no-backup-if-mismatch <filepath>". stdin: license diff, stdout: passed on to our stdout
-	    my $checkoutPatchPid = open2('>&STDOUT', '<&licenseDiffFh', 'patch', '--no-backup-if-mismatch', $staged->{name}) or die 'patch';
+			# The file in the checkout may be different than the file
+			# in the index, so we cannot overwrite it directly.
+			# Instead we try to apply the differencies applied by the
+			# license transformer, and in case that fails, let user
+			# resolve it.
 
-	    # check exit codes of commands run
-	    waitpid $checkoutPatchPid, 0;
-	    if ($? >> 8) {
-		push @filesInCheckoutThatCouldNotBePatchedWithLicenseUpdate, $staged->{name};
-	    }
-	}
+			# Run "git diff <origsha> <transformedsha>". stdin: none, stdout: effective diff of license transformer operation
+			local *licenseDiffFh;
+			open(\*licenseDiffFh, '-|', 'git', 'diff', $staged->{sha}, $transformedSha) or die 'git diff';
+
+			# Run "patch --no-backup-if-mismatch <filepath>". stdin: license diff, stdout: passed on to our stdout
+			my $checkoutPatchPid = open2('>&STDOUT', '<&licenseDiffFh', 'patch', '--no-backup-if-mismatch', $staged->{name}) or die 'patch';
+
+			# check exit codes of commands run
+			waitpid $checkoutPatchPid, 0;
+			if ($? >> 8) {
+			push @filesInCheckoutThatCouldNotBePatchedWithLicenseUpdate, $staged->{name};
+			}
+		}
     }
 }
 

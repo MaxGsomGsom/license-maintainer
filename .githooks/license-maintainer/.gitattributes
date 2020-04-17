@@ -1,4 +1,3 @@
-*             -licensefile
-/license.pm   licensefile=.githooks/license-maintainer/LICENSE-hash
-/pre-commit   licensefile=.githooks/license-maintainer/LICENSE-hash
-/install      licensefile=.githooks/license-maintainer/LICENSE-hash
+*.cs      licensefile=C:\Users\YOUR_PROFILE\.githooks\LICENSE
+*.ts      licensefile=C:\Users\YOUR_PROFILE\.githooks\LICENSE
+*.js      licensefile=C:\Users\YOUR_PROFILE\.githooks\LICENSE
