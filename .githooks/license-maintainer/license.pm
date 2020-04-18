@@ -30,7 +30,6 @@ BEGIN {
 our @EXPORT_OK;
 
 our $YEARS_CAPTURE_GROUP = 'year';
-our $AUTHORS_CAPTURE_GROUP = 'author';
 
 my $EMPTY_LINE_AFTER_HASHBANG = 1;
 
@@ -59,7 +58,7 @@ sub regexpify_license {
     my ($license) = @_ or die;
     $license =~ s!^\s+!!mg; $license =~ s!\s+$!!mg; # remove heading & trailing whitespace on each line
     $license =~ s{^(?:\h*\v)+}{}s; $license =~ s{(?:\v\h*)+$}{}s; # remove heading & trailing empty lines
-    my @parts = split(/(\s+|YEAR|AUTHORS)/, $license);
+    my @parts = split(/(\s+|YEAR)/, $license);
     push @parts, ''; # avoid having to handle final-iteration special cases in for loop
     my $regexp = '\s*'; # compensate for previously removed heading empty lines & whitespace
     for(my $i=0; $i<$#parts; $i+=2) {
@@ -71,10 +70,6 @@ sub regexpify_license {
 	    # accept any sensibly formatted set of years and/or year ranges, ignoring whitespace
 	    my $year_or_year_range_regexp = '\d{4}(?:\s*-\s*\d{4})?';
 	    $special = '(?<'.$YEARS_CAPTURE_GROUP.'>'.$year_or_year_range_regexp.'(?:\s*,\s*'.$year_or_year_range_regexp.')*)';
-	} elsif ($special eq 'AUTHORS') {
-	    # accept any sensibly formatted set of authors, ignoring whitespace
-	    my $author_regexp = '\w[^\r\n,]*[\w>]';
-	    $special = '(?<'.$AUTHORS_CAPTURE_GROUP.'>'.$author_regexp.'(?:\s*,\s*'.$author_regexp.')*)';
 	} elsif(length($special)) {
 	    $special = '\s+'; # instead of exact sequence of whitespace characters accept any amount of whitespace
 	}
@@ -123,28 +118,15 @@ sub pack_ranges {
     return join(", ", @year_ranges);
 }
 
-sub unpack_authors {
-    return split(/\s*,\s*/, $_[0]);
-}
-
-sub pack_authors {
-    return join(", ", grep { defined($_) && length($_) } @_);
-}
-
-sub _execute($$$$$$$) {
-    my ($license_text_file, $source_file, $contents, $author, $add_author_only_if_no_authors_listed, $author_years, $dry_run) = @_;
+sub _execute($$$$$) {
+    my ($license_text_file, $source_file, $contents, $author_years, $dry_run) = @_;
 
     my $license = _getLicenseText($license_text_file);
-    
-	# replace line endings
 
-	$contents =~ s/\r?\n/\r\n/g;
-
-	# check if file contains BOM and temporarily detach it
-
-	my $bom = '';
+	# check if file contains BOM
+	my $bom = 0;
 	if ($contents =~ s/^\xEF\xBB\xBF//) {
-		$bom = $1;
+		$bom = 1;
     }
 
     # create regexp version of license for relaxed detection of existing license
@@ -154,28 +136,17 @@ sub _execute($$$$$$$) {
     # check for possibly existing license and remove it
 
     my $years_str;
-    my $authors_str;
     if ($contents =~ s!^$license_regexp!!s) { # this removes the license as a side effect
-	# license present, construct new $years_str based on currently mentioned years combined with provided list of years, and list of authors merged with provided author
+	# license present, construct new $years_str based on currently mentioned years combined with provided list of years
 	return 0 if($dry_run);
 
 	my $old_years_str = $+{$YEARS_CAPTURE_GROUP};
-	my $old_authors_str = $+{$AUTHORS_CAPTURE_GROUP};
 
 	my %years = unpack_ranges($old_years_str);
 	foreach my $author_year (keys %{$author_years}) {
 	    $years{$author_year} = 1; # add year to set if not yet there
 	}
 	$years_str = pack_ranges(%years);
-
-	my @authors = unpack_authors($old_authors_str);
-	my %authors = map { $_ => 1 } @authors;
-	if (defined($authors{$author}) || ($#authors >= 0 && $add_author_only_if_no_authors_listed)) {
-	    $authors_str = $old_authors_str;
-	} else {
-	    push @authors, $author;
-	    $authors_str = pack_authors(@authors);
-	}
 
     } else {
 	# full license not present - see if any single line of license is
@@ -188,17 +159,15 @@ sub _execute($$$$$$$) {
 	    }
 	}
 
-	# no license - new list of years is just provided list of years, and list of authors is just provided author
+	# no license - new list of years is just provided list of years
 	return 2 if($dry_run);
 	$years_str = pack_ranges(%{$author_years});
-	$authors_str = $author;
     }
 
     # format new license
 
     my $newlicense = $license;
     $newlicense =~ s!YEAR!$years_str!g;
-    $newlicense =~ s!AUTHORS!$authors_str!g;
 
     # output
 
@@ -207,12 +176,12 @@ sub _execute($$$$$$$) {
 
 sub isLackingProperLicense($$$) {
     my ($license_text_file, $source_file, $contents) = @_;
-    return _execute($license_text_file, $source_file, $contents, undef, 0, undef, 1);
+    return _execute($license_text_file, $source_file, $contents, undef, 1);
 }
 
-sub maintainLicense($$$$$) {
-    my ($license_text_file, $source_file, $contents, $author, $add_author_only_if_no_authors_listed, $author_years) = @_;
-    return _execute($license_text_file, $source_file, $contents, $author, $add_author_only_if_no_authors_listed, $author_years, 0);
+sub maintainLicense($$$$) {
+    my ($license_text_file, $source_file, $contents, $author_years) = @_;
+    return _execute($license_text_file, $source_file, $contents, $author_years, 0);
 }
 
 1;

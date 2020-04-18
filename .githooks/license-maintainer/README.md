@@ -13,7 +13,6 @@ Preconfigured for C# and JS/TS. See original repo for details.
 [core]
 	hooksPath = C:\\Users\\YOUR_PROFILE\\.githooks
 	attributesfile = C:\\Users\\YOUR_PROFILE\\.githooks\\.gitattributes
-[license]
-	author = YOUR_COMPANY
 ```
 3. Configure `C:\Users\YOUR_PROFILE\.githooks\.gitattributes`
+4. Configure `C:\Users\YOUR_PROFILE\.githooks\LICENSE`

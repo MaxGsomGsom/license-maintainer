@@ -56,15 +56,6 @@ chomp $repoRootDir;
 my $origLineSeparator = $/;
 $/="\0";
 
-# Fetch author string to use
-my $author = `git config --get license.author`;
-unless(length($author)) {
-    print STDERR "ERROR: Author not configured.\n\nConfigure with:\n\n\tgit config license.author \"My Company Inc\"\n";
-    exit(1);
-}
-$author =~ s!^\s+!!;
-$author =~ s!\s+$!!;
-
 # get list of files in stage
 my @filesInStage;
 open my $fileListFh, '-|', qw(git ls-files --stage -z) or die;
@@ -149,7 +140,7 @@ foreach my $staged (@filesInStage) {
 			close TSTAMPS;
 			scalar(keys %author_years) >= 0 or die "Internal error: Unable to find any commits for $staged->{name}";
 		}
-		my ($ret, @transformedContent) = My::License::maintainLicense($license_text_file, $staged->{name}, $origFileContent, $author, !$isFileChangedByCommit, \%author_years);
+		my ($ret, $bom, @transformedContent) = My::License::maintainLicense($license_text_file, $staged->{name}, $origFileContent, \%author_years);
 		if ($ret == 1) {
 			print STDERR "Please correct the problems before re-attempting commit\n";
 			exit(1);
@@ -161,8 +152,17 @@ foreach my $staged (@filesInStage) {
 		local *transformedShaFh;
 		local *transformedFileContentFh;
 		my $gitHashObjectPid = open2(\*transformedShaFh, \*transformedFileContentFh, 'git', 'hash-object', '-w', '--path', $staged->{name}, '--stdin') or die 'git hash-object';
-
-		print transformedFileContentFh @transformedContent;
+		
+		# replace line endings
+        my $transformedContentCrlf = join('', @transformedContent);
+		$transformedContentCrlf =~ s/\r?\n/\r\n/g;
+		
+		# add BOM if required
+		if ($bom) {
+			print transformedFileContentFh chr(65279);
+		}
+		
+		print transformedFileContentFh $transformedContentCrlf;
 		close transformedFileContentFh;
 
 		# read sha of transformed file
@@ -195,13 +195,25 @@ foreach my $staged (@filesInStage) {
 			local *licenseDiffFh;
 			open(\*licenseDiffFh, '-|', 'git', 'diff', $staged->{sha}, $transformedSha) or die 'git diff';
 
+			undef $/;
+			my $licenseDiff = <licenseDiffFh>;
+			$/ = $origLineSeparator;
+			close licenseDiffFh;
+
+			# replace line endings
+			$licenseDiff =~ s/\r?\n/\r\n/g;
+			
 			# Run "patch --no-backup-if-mismatch <filepath>". stdin: license diff, stdout: passed on to our stdout
-			my $checkoutPatchPid = open2('>&STDOUT', '<&licenseDiffFh', 'patch', '--no-backup-if-mismatch', $staged->{name}) or die 'patch';
+			local *licenseDiffCrlfFh;
+			my $checkoutPatchPid = open2('>&STDOUT', \*licenseDiffCrlfFh, 'patch', '--no-backup-if-mismatch', '--binary', $staged->{name}) or die 'patch';
+
+			print licenseDiffCrlfFh $licenseDiff;
+			close licenseDiffCrlfFh;
 
 			# check exit codes of commands run
 			waitpid $checkoutPatchPid, 0;
 			if ($? >> 8) {
-			push @filesInCheckoutThatCouldNotBePatchedWithLicenseUpdate, $staged->{name};
+				push @filesInCheckoutThatCouldNotBePatchedWithLicenseUpdate, $staged->{name};
 			}
 		}
     }
