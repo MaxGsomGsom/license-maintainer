@@ -1,40 +1,12 @@
 #!/usr/bin/perl
 
-# Copyright 2013, 2015-2016 Nitor Creations Oy, Jonas Berlin
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 use strict;
 use warnings;
 use IPC::Open2;
 use File::Temp qw(mktemp);
 use File::Basename;
 
-#######################
-###### Functions ######
-#######################
-
-BEGIN {
-    use Exporter   ();
-    our ($VERSION, @ISA, @EXPORT);
-
-    $VERSION     = 1.00;
-    @ISA         = qw(Exporter);
-    @EXPORT      = qw(isLackingProperLicense maintainLicense); # default export list
-}
-
-our $YEARS_CAPTURE_GROUP = 'year';
-our $AUTHORS_CAPTURE_GROUP = 'author';
+my $YEARS_CAPTURE_GROUP = 'year';
 
 my %licenseTextCache; # filename => contents
 
@@ -61,7 +33,7 @@ sub regexpify_license {
     my ($license) = @_ or die;
     $license =~ s!^\s+!!mg; $license =~ s!\s+$!!mg; # remove heading & trailing whitespace on each line
     $license =~ s{^(?:\h*\v)+}{}s; $license =~ s{(?:\v\h*)+$}{}s; # remove heading & trailing empty lines
-    my @parts = split(/(\s+|YEAR|AUTHORS)/, $license);
+    my @parts = split(/(\s+|YEAR)/, $license);
     push @parts, ''; # avoid having to handle final-iteration special cases in for loop
     my $regexp = '\s*'; # compensate for previously removed heading empty lines & whitespace
     for(my $i=0; $i<$#parts; $i+=2) {
@@ -73,10 +45,6 @@ sub regexpify_license {
 			# accept any sensibly formatted set of years and/or year ranges, ignoring whitespace
 			my $year_or_year_range_regexp = '\d{4}(?:\s*-\s*\d{4})?';
 			$special = '(?<'.$YEARS_CAPTURE_GROUP.'>'.$year_or_year_range_regexp.'(?:\s*,\s*'.$year_or_year_range_regexp.')*)';
-		} elsif ($special eq 'AUTHORS') {
-			# accept any sensibly formatted set of authors, ignoring whitespace
-			my $author_regexp = '\w[^\r\n,]*[\w>]';
-			$special = '(?<'.$AUTHORS_CAPTURE_GROUP.'>'.$author_regexp.'(?:\s*,\s*'.$author_regexp.')*)';
 		} elsif(length($special)) {
 			$special = '\s+'; # instead of exact sequence of whitespace characters accept any amount of whitespace
 		}
@@ -125,16 +93,8 @@ sub pack_ranges {
     return join(", ", @year_ranges);
 }
 
-sub unpack_authors {
-    return split(/\s*,\s*/, $_[0]);
-}
-
-sub pack_authors {
-    return join(", ", grep { defined($_) && length($_) } @_);
-}
-
-sub _execute($$$$$$$) {
-    my ($license_text_file, $source_file, $contents, $author, $add_author_only_if_no_authors_listed, $author_years, $dry_run) = @_;
+sub _execute($$$$$) {
+    my ($license_text_file, $source_file, $contents, $author_years, $dry_run) = @_;
 
     my $license = _getLicenseText($license_text_file);
 
@@ -151,28 +111,17 @@ sub _execute($$$$$$$) {
     # check for possibly existing license and remove it
 
     my $years_str;
-    my $authors_str;
     if ($contents =~ s!^$license_regexp!!s) { # this removes the license as a side effect
-		# license present, construct new $years_str based on currently mentioned years combined with provided list of years, and list of authors merged with provided author
+		# license present, construct new $years_str based on currently mentioned years combined with provided list of years
 		return 0 if($dry_run);
 
 		my $old_years_str = $+{$YEARS_CAPTURE_GROUP};
-		my $old_authors_str = $+{$AUTHORS_CAPTURE_GROUP};
 
 		my %years = unpack_ranges($old_years_str);
 		foreach my $author_year (keys %{$author_years}) {
 			$years{$author_year} = 1; # add year to set if not yet there
 		}
 		$years_str = pack_ranges(%years);
-
-		my @authors = unpack_authors($old_authors_str);
-		my %authors = map { $_ => 1 } @authors;
-		if (defined($authors{$author}) || ($#authors >= 0 && $add_author_only_if_no_authors_listed)) {
-			$authors_str = $old_authors_str;
-		} else {
-			push @authors, $author;
-			$authors_str = pack_authors(@authors);
-		}
     } else {
 		# full license not present - see if any single line of license is
 		# present, in which case someone broke the header accidentally
@@ -184,31 +133,24 @@ sub _execute($$$$$$$) {
 			}
 		}
 
-		# no license - new list of years is just provided list of years, and list of authors is just provided author
+		# no license - new list of years is just provided list of years
 		return 2 if($dry_run);
 			$years_str = pack_ranges(%{$author_years});
-			$authors_str = $author;
     }
 
     # format new license
 
     my $newlicense = $license;
     $newlicense =~ s!YEAR!$years_str!g;
-    $newlicense =~ s!AUTHORS!$authors_str!g;
 
     # output
 
     return 0, $bom, $newlicense, $contents;
 }
 
-sub isLackingProperLicense($$$) {
-    my ($license_text_file, $source_file, $contents) = @_;
-    return _execute($license_text_file, $source_file, $contents, undef, 0, undef, 1);
-}
-
-sub maintainLicense($$$$$$) {
-    my ($license_text_file, $source_file, $contents, $author, $add_author_only_if_no_authors_listed, $author_years) = @_;
-    return _execute($license_text_file, $source_file, $contents, $author, $add_author_only_if_no_authors_listed, $author_years, 0);
+sub maintainLicense($$$$) {
+    my ($license_text_file, $source_file, $contents, $author_years) = @_;
+    return _execute($license_text_file, $source_file, $contents, $author_years, 0);
 }
 
 sub extract_timestamp($) {
@@ -219,37 +161,12 @@ sub extract_timestamp($) {
     return undef;
 }
 
-#######################
-##### Main script #####
-#######################
+##### Main #####
 
 my $EMPTY_SHA = 'e69de29bb2d1d6434b8b29ae775ad8c2e48c5391';
 
-my $INJECT_LICENSES = length(($ENV{"INJECT_LICENSES"} || "") =~ s!\s+!!r) > 0;
-
-if ($INJECT_LICENSES) {
-    print STDERR qq{NOTE: Adding/updating licenses for all maintained files, i.e.
- - adds license to files lacking an license
- - adds the author (configured in the "license.author" configuration option) to
-   files lacking an author
- - adds missing years to existing licenses, for example if some user committed
-   stuff without updating the license e.g. did not have the pre-commit hook
-   installed
-
-};
-}
-
 my $origLineSeparator = $/;
 $/="\0";
-
-# Fetch author string to use
-my $author = `git config --get license.author`;
-unless(length($author)) {
-    print STDERR "ERROR: Author not configured.\n\nConfigure with:\n\n\tgit config license.author \"My Company Inc\"\n";
-    exit(1);
-}
-$author =~ s!^\s+!!;
-$author =~ s!\s+$!!;
 
 # get list of files in stage
 my @filesInStage;
@@ -306,15 +223,26 @@ foreach my $staged (@filesInStage) {
     # transformedsha=`git cat-file blob <origsha> | perl license.pl LICENSE-<format> <file> | git hash-object -w --path <filepath> --stdin`
 
 	# file changed, add license or update license to contain current year
-    if ($isFileChangedByCommit || $INJECT_LICENSES) {
+    if ($isFileChangedByCommit) {
 		# Run "git cat-file blob <origsha>" to get the staged files' contents on stdout e.g. readable through *origFileContentFh
 		local *origFileContentFh;
 		open(\*origFileContentFh, '-|', 'git', 'cat-file', 'blob', $staged->{sha}) or die 'git cat-file '.$staged->{sha};
-
 		undef $/;
 		my $origFileContent = <origFileContentFh>;
 		$/ = $origLineSeparator;
 		close origFileContentFh;
+
+		# Read file from filesystem to find correct line endings
+		open(my $fhToCheckCrlf, '<', $staged->{name}) or die "Cannot open file ".$staged->{name};
+		undef $/;
+		my $contentToCheckCrlf = <$fhToCheckCrlf>;
+		$/ = $origLineSeparator;
+		close($fhToCheckCrlf);
+
+		my $hasClrf = 0;
+		if ($contentToCheckCrlf =~ /\r\n/) {
+    		$hasClrf = 1;
+		}
 
 		my $license_text_file = $licenseFile;
 
@@ -335,7 +263,8 @@ foreach my $staged (@filesInStage) {
 			close TSTAMPS;
 			scalar(keys %author_years) >= 0 or die "Internal error: Unable to find any commits for $staged->{name}";
 		}
-		my ($ret, $bom, @transformedContent) = maintainLicense($license_text_file, $staged->{name}, $origFileContent, $author, !$isFileChangedByCommit, \%author_years);
+
+		my ($ret, $bom, @transformedContent) = maintainLicense($license_text_file, $staged->{name}, $origFileContent, \%author_years);
 		if ($ret == 1) {
 			print STDERR "Please correct the problems before re-attempting commit\n";
 			exit(1);
@@ -350,11 +279,17 @@ foreach my $staged (@filesInStage) {
 		
 		# replace line endings
         my $transformedContentCrlf = join('', @transformedContent);
-		$transformedContentCrlf =~ s/\r?\n/\r\n/g;
+
+		# replace line endings
+		if ($hasClrf) {
+			$transformedContentCrlf =~ s/\r?\n/\r\n/g;
+		}
 		
 		# add BOM if required
 		if ($bom) {
+			binmode(transformedFileContentFh, "encoding(UTF-8)");
 			print transformedFileContentFh chr(65279);
+			binmode(transformedFileContentFh, ":pop"); 
 		}
 		
 		print transformedFileContentFh $transformedContentCrlf;
@@ -396,8 +331,10 @@ foreach my $staged (@filesInStage) {
 			close licenseDiffFh;
 
 			# replace line endings
-			$licenseDiff =~ s/\r?\n/\r\n/g;
-			
+			if ($hasClrf) {
+				$licenseDiff =~ s/\r?\n/\r\n/g;
+			}
+
 			# Run "patch --no-backup-if-mismatch <filepath>". stdin: license diff, stdout: passed on to our stdout
 			local *licenseDiffCrlfFh;
 			my $checkoutPatchPid = open2('>&STDOUT', \*licenseDiffCrlfFh, 'patch', '--no-backup-if-mismatch', '--binary', $staged->{name}) or die 'patch';
@@ -421,20 +358,4 @@ if ($#filesInCheckoutThatCouldNotBePatchedWithLicenseUpdate >= 0) {
 		"\n",
 		"Please apply the license updates manually for these files. Possibly see the associated .rej files for what changes are needed.\n",
 		"\n");
-}
-if ($numFilesWithLicenseBrokenOrMissing) {
-    print STDERR qq{
-NOTE: Some files had license problems, kindly fix them in a separate commit by running:
-
-  INJECT_LICENSES=1 git commit --allow-empty -m 'Add/update licenses for all maintained files' --edit
-
-This adds/updates licenses for all maintained files, i.e.
- - adds license to files lacking an license
- - adds the author (configured in the "license.author" configuration option) to
-   files lacking an author
- - adds missing years to existing licenses, for example if some user committed
-   stuff without updating the license e.g. did not have the pre-commit hook
-   installed
-
-};
 }

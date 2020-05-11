@@ -1,3 +1,5 @@
 #!/bin/sh
 
-perl -w C:/Users/YOUR_PROFILE/.githooks/license.pl
+if [ -x "$(command -v perl)" ]; then
+  perl -w license.pl
+fi
